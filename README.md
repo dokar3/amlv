@@ -10,6 +10,8 @@ Apple Music (for Android) Lyrics View in Jetpack Compose.
 
 **Video**
 
+Check this [tweet](https://twitter.com/EnDeepFour/status/1612742331773423617)
+
 ### Details
 
 - Parse and display `.lrc` lyrics
