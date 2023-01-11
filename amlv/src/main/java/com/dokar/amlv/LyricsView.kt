@@ -2,7 +2,6 @@ package com.dokar.amlv
 
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -50,6 +49,7 @@ import androidx.compose.ui.util.unpackInt1
 import androidx.compose.ui.util.unpackInt2
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -164,7 +164,7 @@ fun LyricsView(
             val lines = state.lyrics?.lines ?: emptyList()
             for ((index, line) in lines.withIndex()) {
                 LyricsViewLine(
-                    isCurrentLine = index == state.currentLineIndex,
+                    isActive = index == state.currentLineIndex,
                     content = line.content,
                     contentColor = if (darkTheme) Color.White else Color.Black,
                     fontSize = fontSize,
@@ -201,7 +201,7 @@ fun LyricsView(
 
 @Composable
 private fun LyricsViewLine(
-    isCurrentLine: Boolean,
+    isActive: Boolean,
     content: String,
     contentColor: Color,
     fontSize: TextUnit,
@@ -210,17 +210,43 @@ private fun LyricsViewLine(
     onClick: () -> Unit,
     offsetYProvider: () -> Int,
     modifier: Modifier = Modifier,
+    activeScale: Float = 1.1f,
+    inactiveScale: Float = 1f,
+    activeAlpha: Float = 1f,
+    inactiveAlpha: Float = 0.35f,
 ) {
-    val transition = animateFloatAsState(
-        targetValue = if (isCurrentLine) 1f else 0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioLowBouncy,
-            stiffness = Spring.StiffnessLow,
-        )
-    )
+    var scale by remember { mutableStateOf(if (isActive) activeScale else inactiveScale) }
+    var alpha by remember { mutableStateOf(if (isActive) activeAlpha else inactiveAlpha) }
 
     val interactionSource = remember { MutableInteractionSource() }
     val indication = rememberRipple(color = contentColor)
+
+    LaunchedEffect(isActive) {
+        launch {
+            animate(
+                initialValue = scale,
+                targetValue = if (isActive) activeScale else inactiveScale,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessLow,
+                )
+            ) { value, _ ->
+                scale = value
+            }
+        }
+        launch {
+            // Composable could suddenly go invisible for one frame (or few frame?) when
+            // isActive changes to false and the alpha animation starts. Delay may help
+            // to reduce these glitches
+            repeat(10) { awaitFrame() }
+            animate(
+                initialValue = alpha,
+                targetValue = if (isActive) activeAlpha else inactiveAlpha,
+            ) { value, _ ->
+                alpha = value
+            }
+        }
+    }
 
     Box(
         modifier = modifier
@@ -233,6 +259,8 @@ private fun LyricsViewLine(
                     onPress = {
                         val press = PressInteraction.Press(it)
                         try {
+                            // Do not show indications (ripples) if the tap is done in 100ms since
+                            // ripple animations will impact the performance of other animations
                             withTimeout(timeMillis = 100) {
                                 tryAwaitRelease()
                             }
@@ -257,9 +285,9 @@ private fun LyricsViewLine(
             modifier = Modifier
                 .graphicsLayer {
                     transformOrigin = TransformOrigin(0f, 1f)
-                    scaleX = 1.0f + 0.1f * transition.value
-                    scaleY = scaleX
-                    alpha = (0.35f + 0.65f * transition.value).coerceIn(0f, 1f)
+                    scaleX = scale
+                    scaleY = scale
+                    this.alpha = alpha
                 },
             color = contentColor,
             fontSize = fontSize,
