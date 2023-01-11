@@ -77,8 +77,8 @@ class LyricsViewState(
 
             isPlaying = true
 
-            fun checkCoroutine(): Boolean {
-                return isActive && isPlaying
+            fun checkFinished(): Boolean {
+                return !isActive || !isPlaying || position >= lyrics.optimalDurationMillis
             }
 
             /**
@@ -91,7 +91,7 @@ class LyricsViewState(
                 val extraDelay = duration % tickMillis
                 var i = 0L
                 var millis = measureTimeMillis {
-                    while (i < loops && checkCoroutine()) {
+                    while (i < loops && !checkFinished()) {
                         delay(tickMillis)
                         position += tickMillis
                         i++
@@ -99,7 +99,7 @@ class LyricsViewState(
                 }
                 val deviation = i * tickMillis - millis
 
-                if (!checkCoroutine()) {
+                if (checkFinished()) {
                     return deviation
                 }
 
@@ -114,7 +114,7 @@ class LyricsViewState(
 
             var deviationMillis = 0L
 
-            while (currLineIdx < lineCount && checkCoroutine()) {
+            while (currLineIdx < lineCount && !checkFinished()) {
                 currentLineIndex = currLineIdx
 
                 val duration = if (currLineIdx < 0) {
@@ -124,7 +124,7 @@ class LyricsViewState(
                 }
                 deviationMillis = startTicking(duration + deviationMillis)
 
-                if (!checkCoroutine()) {
+                if (checkFinished()) {
                     return@launch
                 }
 
@@ -143,14 +143,15 @@ class LyricsViewState(
                     }
                 }
 
-                if (!checkCoroutine()) {
+                if (checkFinished()) {
                     return@launch
                 }
 
                 currLineIdx++
             }
-
-            if (isActive) {
+        }
+        playbackJob!!.invokeOnCompletion { cause ->
+            if (cause == null) {
                 isPlaying = false
             }
         }
