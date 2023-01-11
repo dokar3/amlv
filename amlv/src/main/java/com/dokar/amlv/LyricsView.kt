@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
@@ -77,6 +79,8 @@ fun LyricsView(
     fontWeight: FontWeight = FontWeight.Bold,
     lineHeight: TextUnit = 1.2.em,
 ) {
+    val scope = rememberCoroutineScope()
+
     val scrollState = rememberScrollState()
 
     var lyricsHeight by remember { mutableStateOf(0) }
@@ -89,65 +93,91 @@ fun LyricsView(
 
     var animationItemsRange by remember { mutableStateOf(-1..-1) }
 
-    LaunchedEffect(scrollState, state) {
-        fun getAnimationItemsRange(currentIndex: Int): IntRange {
-            val lines = state.lyrics?.lines ?: return -1..-1
-            val currItemInfo = itemsInfo[currentIndex] ?: return -1..-1
-            val scrollY = scrollState.value
-            var start = -1
-            var end = -1
-            for (i in lines.indices) {
-                val itemInfo = itemsInfo[i] ?: continue
+    var itemsAnimationJob by remember { mutableStateOf<Job?>(null) }
 
-                val itemTop = itemInfo.offsetY
-                val itemHeight = itemInfo.height
-                val itemBottom = itemTop + itemHeight
+    fun updateItemInfo(index: Int, itemCoordinates: LayoutCoordinates) {
+        itemsInfo[index] = ItemInfo(
+            offsetY = itemCoordinates.positionInParent().y.toInt(),
+            height = itemCoordinates.size.height,
+        )
+    }
 
-                if (itemBottom < scrollY) {
-                    continue
-                } else if (start == -1) {
-                    start = i
-                }
+    fun getAnimationItemsRange(currentIndex: Int): IntRange {
+        val lines = state.lyrics?.lines ?: return -1..-1
+        val currItemInfo = itemsInfo[currentIndex] ?: return -1..-1
+        val scrollY = scrollState.value
+        var start = -1
+        var end = -1
+        for (i in lines.indices) {
+            val itemInfo = itemsInfo[i] ?: continue
 
-                if (itemTop > currItemInfo.offsetY + lyricsHeight) {
-                    break
-                } else {
-                    end = i
-                }
+            val itemTop = itemInfo.offsetY
+            val itemHeight = itemInfo.height
+            val itemBottom = itemTop + itemHeight
+
+            if (itemBottom < scrollY) {
+                continue
+            } else if (start == -1) {
+                start = i
             }
-            return start..end
+
+            if (itemTop > currItemInfo.offsetY + lyricsHeight) {
+                break
+            } else {
+                end = i
+            }
         }
+        return start..end
+    }
 
-        var animationJob: Job? = null
+    fun getItemOffsetY(index: Int): Int {
+        return if (index in animationItemsRange) {
+            val value = currItemsOffsetY
+            if (index > state.currentLineIndex) {
+                // These lines produce the animation delay
+                val factor = (1f + (index - state.currentLineIndex) * 0.08f)
+                val progress = currItemsOffsetY.toFloat() / initialItemsOffsetY
+                val finalProgress = (progress * factor).coerceAtMost(1f)
+                (initialItemsOffsetY * finalProgress).toInt()
+            } else {
+                value
+            }
+        } else {
+            0
+        }
+    }
 
+    fun startItemsAnimation(targetItemIndex: Int) {
+        val targetItemTop = itemsInfo[targetItemIndex]?.offsetY ?: return
+        itemsAnimationJob?.cancel()
+        itemsAnimationJob = scope.launch {
+            val targetScrollY = targetItemTop.coerceAtMost(scrollState.maxValue)
+            val diff = targetScrollY - scrollState.value
+            // 1) Find items to animate
+            animationItemsRange = getAnimationItemsRange(targetItemIndex)
+
+            // 2) Scroll the lyrics to the target position
+            scrollState.scrollTo(targetScrollY)
+
+            // 3) Apply an offset to items so the lyric looks like it hasn't moved
+            Snapshot.withoutReadObservation { initialItemsOffsetY = diff }
+            currItemsOffsetY = diff
+
+            // 4) Animate items to the target position
+            animate(
+                initialValue = diff.toFloat(),
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000),
+            ) { value, _ ->
+                currItemsOffsetY = value.toInt()
+            }
+        }
+    }
+
+    LaunchedEffect(scrollState, state) {
         snapshotFlow { state.currentLineIndex }
             .filter { it >= 0 }
-            .collect { index ->
-                val targetItemTop = itemsInfo[index]?.offsetY ?: return@collect
-                animationJob?.cancel()
-                animationJob = launch {
-                    val targetScrollY = targetItemTop.coerceAtMost(scrollState.maxValue)
-                    val diff = targetScrollY - scrollState.value
-                    // 1) Find items to animate
-                    animationItemsRange = getAnimationItemsRange(index)
-
-                    // 2) Scroll the lyrics to the target position
-                    scrollState.scrollTo(targetScrollY)
-
-                    // 3) Apply an offset to items so the lyric looks like it hasn't moved
-                    Snapshot.withoutReadObservation { initialItemsOffsetY = diff }
-                    currItemsOffsetY = diff
-
-                    // 4) Animate items to the target position
-                    animate(
-                        initialValue = diff.toFloat(),
-                        targetValue = 0f,
-                        animationSpec = tween(durationMillis = 1000),
-                    ) { value, _ ->
-                        currItemsOffsetY = value.toInt()
-                    }
-                }
-            }
+            .collect(::startItemsAnimation)
     }
 
     Box(
@@ -171,28 +201,8 @@ fun LyricsView(
                     fontWeight = fontWeight,
                     lineHeight = lineHeight,
                     onClick = { state.seekToLine(index) },
-                    offsetYProvider = {
-                        if (index in animationItemsRange) {
-                            val value = currItemsOffsetY
-                            if (index > state.currentLineIndex) {
-                                // These lines produce the animation delay
-                                val factor = (1f + (index - state.currentLineIndex) * 0.08f)
-                                val progress = currItemsOffsetY.toFloat() / initialItemsOffsetY
-                                val finalProgress = (progress * factor).coerceAtMost(1f)
-                                (initialItemsOffsetY * finalProgress).toInt()
-                            } else {
-                                value
-                            }
-                        } else {
-                            0
-                        }
-                    },
-                    modifier = Modifier.onGloballyPositioned {
-                        itemsInfo[index] = ItemInfo(
-                            offsetY = it.positionInParent().y.toInt(),
-                            height = it.size.height,
-                        )
-                    },
+                    offsetYProvider = { getItemOffsetY(index) },
+                    modifier = Modifier.onGloballyPositioned { updateItemInfo(index, it) },
                 )
             }
         }
