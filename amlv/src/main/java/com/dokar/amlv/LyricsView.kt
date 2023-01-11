@@ -83,7 +83,7 @@ fun LyricsView(
 
     val itemsInfo = remember { mutableMapOf<Int, ItemInfo>() }
 
-    var startItemsOffsetY by remember { mutableStateOf(0) }
+    var initialItemsOffsetY by remember { mutableStateOf(0) }
 
     var currItemsOffsetY by remember { mutableStateOf(0) }
 
@@ -120,7 +120,7 @@ fun LyricsView(
 
         var animationJob: Job? = null
 
-        snapshotFlow { state.currentLine }
+        snapshotFlow { state.currentLineIndex }
             .filter { it >= 0 }
             .collect { index ->
                 val targetItemTop = itemsInfo[index]?.offsetY ?: return@collect
@@ -135,7 +135,7 @@ fun LyricsView(
                     scrollState.scrollTo(targetScrollY)
 
                     // 3) Apply an offset to items so the lyric looks like it hasn't moved
-                    Snapshot.withoutReadObservation { startItemsOffsetY = diff }
+                    Snapshot.withoutReadObservation { initialItemsOffsetY = diff }
                     currItemsOffsetY = diff
 
                     // 4) Animate items to the target position
@@ -164,10 +164,9 @@ fun LyricsView(
             val lines = state.lyrics?.lines ?: emptyList()
             for ((index, line) in lines.withIndex()) {
                 LyricsViewLine(
-                    isCurrentLine = index == state.currentLine,
+                    isCurrentLine = index == state.currentLineIndex,
                     content = line.content,
-                    textColor = if (darkTheme) Color.White else Color.Black,
-                    rippleColor = if (darkTheme) Color.White else Color.Black,
+                    contentColor = if (darkTheme) Color.White else Color.Black,
                     fontSize = fontSize,
                     fontWeight = fontWeight,
                     lineHeight = lineHeight,
@@ -175,12 +174,12 @@ fun LyricsView(
                     offsetYProvider = {
                         if (index in animationItemsRange) {
                             val value = currItemsOffsetY
-                            if (index > state.currentLine) {
+                            if (index > state.currentLineIndex) {
                                 // These lines produce the animation delay
-                                val factor = (1f + (index - state.currentLine) * 0.08f)
-                                val progress = currItemsOffsetY.toFloat() / startItemsOffsetY
+                                val factor = (1f + (index - state.currentLineIndex) * 0.08f)
+                                val progress = currItemsOffsetY.toFloat() / initialItemsOffsetY
                                 val finalProgress = (progress * factor).coerceAtMost(1f)
-                                (startItemsOffsetY * finalProgress).toInt()
+                                (initialItemsOffsetY * finalProgress).toInt()
                             } else {
                                 value
                             }
@@ -204,8 +203,7 @@ fun LyricsView(
 private fun LyricsViewLine(
     isCurrentLine: Boolean,
     content: String,
-    textColor: Color,
-    rippleColor: Color,
+    contentColor: Color,
     fontSize: TextUnit,
     fontWeight: FontWeight,
     lineHeight: TextUnit,
@@ -213,7 +211,7 @@ private fun LyricsViewLine(
     offsetYProvider: () -> Int,
     modifier: Modifier = Modifier,
 ) {
-    val transitionValue = animateFloatAsState(
+    val transition = animateFloatAsState(
         targetValue = if (isCurrentLine) 1f else 0f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
@@ -222,7 +220,7 @@ private fun LyricsViewLine(
     )
 
     val interactionSource = remember { MutableInteractionSource() }
-    val indication = rememberRipple(color = rippleColor)
+    val indication = rememberRipple(color = contentColor)
 
     Box(
         modifier = modifier
@@ -259,11 +257,11 @@ private fun LyricsViewLine(
             modifier = Modifier
                 .graphicsLayer {
                     transformOrigin = TransformOrigin(0f, 1f)
-                    scaleX = 1.0f + 0.1f * transitionValue.value
+                    scaleX = 1.0f + 0.1f * transition.value
                     scaleY = scaleX
-                    alpha = (0.35f + 0.65f * transitionValue.value).coerceIn(0f, 1f)
+                    alpha = (0.35f + 0.65f * transition.value).coerceIn(0f, 1f)
                 },
-            color = textColor,
+            color = contentColor,
             fontSize = fontSize,
             fontWeight = fontWeight,
             lineHeight = lineHeight,

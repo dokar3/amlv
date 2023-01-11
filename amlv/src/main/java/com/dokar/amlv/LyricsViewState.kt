@@ -44,13 +44,13 @@ class LyricsViewState(
     var position by mutableStateOf(0L)
         private set
 
-    internal var currentLine by mutableStateOf(-1)
+    internal var currentLineIndex by mutableStateOf(-1)
         private set
 
     var isPlaying by mutableStateOf(false)
         private set
 
-    private var playingJob: Job? = null
+    private var playbackJob: Job? = null
 
     init {
         require(tickMillis > 0) { "tickMillis must > 0" }
@@ -70,10 +70,10 @@ class LyricsViewState(
             return
         }
 
-        playingJob?.cancel()
-        playingJob = scope.launch {
+        playbackJob?.cancel()
+        playbackJob = scope.launch {
             var currLineIdx = findLineIndexAt(position)
-            currentLine = currLineIdx
+            currentLineIndex = currLineIdx
 
             isPlaying = true
 
@@ -90,7 +90,6 @@ class LyricsViewState(
                 val loops = duration / tickMillis
                 val extraDelay = duration % tickMillis
                 var i = 0L
-
                 var millis = measureTimeMillis {
                     while (i < loops && checkCoroutine()) {
                         delay(tickMillis)
@@ -98,7 +97,6 @@ class LyricsViewState(
                         i++
                     }
                 }
-
                 val deviation = i * tickMillis - millis
 
                 if (!checkCoroutine()) {
@@ -109,7 +107,6 @@ class LyricsViewState(
                     delay(extraDelay)
                     position += extraDelay
                 }
-
                 val extraDeviation = extraDelay - millis
 
                 return extraDeviation + deviation
@@ -118,8 +115,7 @@ class LyricsViewState(
             var deviationMillis = 0L
 
             while (currLineIdx < lineCount && checkCoroutine()) {
-                currentLine = currLineIdx
-
+                currentLineIndex = currLineIdx
 
                 val duration = if (currLineIdx < 0) {
                     lines.first().startAt - position
@@ -137,7 +133,7 @@ class LyricsViewState(
                     val nextLineStartAt = lines[currLineIdx + 1].startAt
                     val inactiveDuration = nextLineStartAt - lineStopAt
                     if (inactiveDuration > 0) {
-                        currentLine = -1
+                        currentLineIndex = -1
                         val actualDuration = inactiveDuration + deviationMillis
                         if (actualDuration > 0L) {
                             deviationMillis = startTicking(actualDuration)
@@ -162,7 +158,7 @@ class LyricsViewState(
 
     fun pause() {
         isPlaying = false
-        playingJob?.cancel()
+        playbackJob?.cancel()
     }
 
     fun seekToLine(index: Int) {
@@ -175,13 +171,13 @@ class LyricsViewState(
     fun seekTo(position: Long) {
         val playAfterSeeking = isPlaying
         if (isPlaying) {
-            playingJob?.cancel()
+            playbackJob?.cancel()
         }
         this.position = position
         if (playAfterSeeking) {
             play()
         } else {
-            currentLine = findLineIndexAt(position)
+            currentLineIndex = findLineIndexAt(position)
         }
     }
 
