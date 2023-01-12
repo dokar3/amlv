@@ -6,5 +6,5 @@ plugins {
 }
 
 ext {
-    compose_bom = "2022.12.00"
+    compose_bom = "2023.01.00"
 }
